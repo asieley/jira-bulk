@@ -70,7 +70,6 @@ def process_csv():
                     "project": {"key": PROJECT_KEY},
                     "summary": f"Bulk: {summary}",
                     "issuetype": {"name": ISSUE_TYPE},
-                    "parent": {"key": issue_key}
                 }
             }
             res = requests.post(f"{JIRA_BASE}/rest/api/3/issue", json=payload, auth=auth, headers=headers)
@@ -93,4 +92,5 @@ if __name__ == "__main__":
     # This reads the PORT variable Render sets automatically
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
+
 
