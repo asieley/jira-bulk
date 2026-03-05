@@ -5,6 +5,11 @@ from requests.auth import HTTPBasicAuth
 import io
 import os
 import threading
+import re
+import sys
+
+# Force UTF-8 for stdout to avoid encoding issues
+sys.stdout.reconfigure(encoding='utf-8')
 
 app = Flask(__name__)
 
@@ -69,38 +74,43 @@ HTML_UI = """
 """
 
 # ================================
-# 🔥 NEW — Get Jira accountId
+# Helper to remove emojis / non-BMP characters
+# ================================
+def remove_emojis(text):
+    if not text:
+        return ""
+    return re.sub(r'[\U00010000-\U0010FFFF]', '', text)
+
+# ================================
+# Get Jira accountId
 # ================================
 def get_account_id(email, auth, headers):
     try:
         url = f"{JIRA_BASE}/rest/api/3/user/search"
         params = {"query": email}
-
         res = requests.get(url, params=params, auth=auth, headers=headers)
-
         if res.status_code == 200 and res.json():
             return res.json()[0].get("accountId")
         else:
             print(f"WARNING: Could not find accountId for {email}", flush=True)
             return None
-
     except Exception as e:
         print(f"ERROR fetching accountId: {e}", flush=True)
         return None
 
-
 # ================================
-# 🚀 Background processor
+# Background processor
 # ================================
 def process_in_background(df, user_email, user_token, reporter_name):
     auth = HTTPBasicAuth(user_email, user_token)
     headers = {"Accept": "application/json", "Content-Type": "application/json"}
 
-    # ✅ Get reporter accountId once
     reporter_account_id = get_account_id(user_email, auth, headers)
 
+    reporter_name = remove_emojis(reporter_name)
+
     for index, row in df.iterrows():
-        summary = str(row.get("Summary", "Site Access Request")).strip()
+        summary = remove_emojis(str(row.get("Summary", "Site Access Request")).strip())
         if not summary or summary.lower() == "nan":
             continue
 
@@ -121,7 +131,6 @@ def process_in_background(df, user_email, user_token, reporter_name):
             }
         }
 
-        # ✅ Set reporter properly (fixes Anonymous)
         if reporter_account_id:
             fields_payload["reporter"] = {"id": reporter_account_id}
 
@@ -143,14 +152,12 @@ def process_in_background(df, user_email, user_token, reporter_name):
         except Exception as e:
             print(f"CRITICAL ERROR: {str(e)}", flush=True)
 
-
 # ================================
-# 🌐 Routes
+# Routes
 # ================================
 @app.route("/", methods=["GET"])
 def home():
     return render_template_string(HTML_UI)
-
 
 @app.route("/process-csv", methods=["POST"])
 def process_csv():
@@ -179,9 +186,8 @@ def process_csv():
     except Exception as e:
         return f"Error: {str(e)}", 500
 
-
 # ================================
-# 🚀 Run App
+# Run App
 # ================================
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))
