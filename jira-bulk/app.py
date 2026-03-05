@@ -8,19 +8,12 @@ import threading
 
 app = Flask(__name__)
 
-# ================================
-# 🔧 CONFIG
-# ================================
+# === CONFIGURATION (Global Settings) ===
 JIRA_BASE = os.environ.get("JIRA_BASE")
-SERVICE_DESK_ID = os.environ.get("SERVICE_DESK_ID")
-REQUEST_TYPE_ID = os.environ.get("REQUEST_TYPE_ID")
-# ✅ Single server agent credentials
-JIRA_AGENT_EMAIL = os.environ.get("JIRA_AGENT_EMAIL")
-JIRA_AGENT_TOKEN = os.environ.get("JIRA_AGENT_TOKEN")
+PROJECT_KEY = os.environ.get("PROJECT_KEY", "SAM")
+ISSUE_TYPE = os.environ.get("ISSUE_TYPE", "Task")
 
-# ================================
-# 🎨 UI (REMOVE TOKEN INPUT)
-# ================================
+# === UI DESIGN (Centered + Orange Button) ===
 HTML_UI = """
 <!DOCTYPE html>
 <html>
@@ -62,6 +55,9 @@ HTML_UI = """
             <label>Work Email</label>
             <input type="email" name="user_email" placeholder="yourname@company.com" required>
             
+            <label>Jira API Token</label>
+            <input type="password" name="user_token" placeholder="Paste your personal token" required>
+            
             <label>Upload CSV File</label>
             <input type="file" name="file" accept=".csv" required>
             
@@ -73,60 +69,94 @@ HTML_UI = """
 """
 
 # ================================
-# 🚀 BACKGROUND PROCESSOR (SINGLE AGENT)
+# 🔥 NEW — Get Jira accountId
 # ================================
-def process_in_background(df, user_email, reporter_name):
-    auth = HTTPBasicAuth(JIRA_AGENT_EMAIL, JIRA_AGENT_TOKEN)
+def get_account_id(email, auth, headers):
+    try:
+        url = f"{JIRA_BASE}/rest/api/3/user/search"
+        params = {"query": email}
 
-    headers = {
-        "Accept": "application/json",
-        "Content-Type": "application/json",
-        "X-ExperimentalApi": "opt-in"
-    }
+        res = requests.get(url, params=params, auth=auth, headers=headers)
+
+        if res.status_code == 200 and res.json():
+            return res.json()[0].get("accountId")
+        else:
+            print(f"WARNING: Could not find accountId for {email}", flush=True)
+            return None
+
+    except Exception as e:
+        print(f"ERROR fetching accountId: {e}", flush=True)
+        return None
+
+
+# ================================
+# 🚀 Background processor
+# ================================
+def process_in_background(df, user_email, user_token, reporter_name):
+    auth = HTTPBasicAuth(user_email, user_token)
+    headers = {"Accept": "application/json", "Content-Type": "application/json"}
+
+    # ✅ Get reporter accountId once
+    reporter_account_id = get_account_id(user_email, auth, headers)
 
     for index, row in df.iterrows():
         summary = str(row.get("Summary", "Site Access Request")).strip()
         if not summary or summary.lower() == "nan":
             continue
 
-        payload = {
-            "serviceDeskId": SERVICE_DESK_ID,
-            "requestTypeId": REQUEST_TYPE_ID,
-            "raiseOnBehalfOf": user_email,  # ✅ Correct reporter
-            "requestFieldValues": {
-                "summary": summary,
-                "description": f"Requested by: {reporter_name}"
+        fields_payload = {
+            "project": {"key": PROJECT_KEY},
+            "issuetype": {"name": ISSUE_TYPE},
+            "summary": summary,
+            "description": {
+                "version": 1,
+                "type": "doc",
+                "content": [{
+                    "type": "paragraph",
+                    "content": [{
+                        "type": "text",
+                        "text": f"Requested by: {reporter_name}"
+                    }]
+                }]
             }
         }
 
+        # ✅ Set reporter properly (fixes Anonymous)
+        if reporter_account_id:
+            fields_payload["reporter"] = {"id": reporter_account_id}
+
+        payload = {"fields": fields_payload}
+
         try:
             res = requests.post(
-                f"{JIRA_BASE}/rest/servicedeskapi/request",
+                f"{JIRA_BASE}/rest/api/3/issue",
                 json=payload,
                 auth=auth,
                 headers=headers
             )
 
-            if res.status_code in (200, 201):
-                key = res.json().get("issueKey")
-                print(f"LOG: Created {key} for {reporter_name}", flush=True)
+            if res.status_code == 201:
+                print(f"LOG: Created {res.json().get('key')} for {reporter_name}", flush=True)
             else:
-                print(f"ERROR Row {index+1}: {res.status_code} - {res.text}", flush=True)
+                print(f"ERROR: Row {index+1} - {res.text}", flush=True)
 
         except Exception as e:
             print(f"CRITICAL ERROR: {str(e)}", flush=True)
 
+
 # ================================
-# 🌐 ROUTES
+# 🌐 Routes
 # ================================
 @app.route("/", methods=["GET"])
 def home():
     return render_template_string(HTML_UI)
 
+
 @app.route("/process-csv", methods=["POST"])
 def process_csv():
     rep_name = request.form.get("reporter_name")
     email = request.form.get("user_email")
+    token = request.form.get("user_token")
     file = request.files.get("file")
 
     try:
@@ -134,7 +164,7 @@ def process_csv():
 
         thread = threading.Thread(
             target=process_in_background,
-            args=(df, email, rep_name)
+            args=(df, email, token, rep_name)
         )
         thread.start()
 
@@ -149,8 +179,9 @@ def process_csv():
     except Exception as e:
         return f"Error: {str(e)}", 500
 
+
 # ================================
-# 🚀 RUN
+# 🚀 Run App
 # ================================
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))
