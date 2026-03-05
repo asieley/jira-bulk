@@ -14,9 +14,12 @@ app = Flask(__name__)
 JIRA_BASE = os.environ.get("JIRA_BASE")
 SERVICE_DESK_ID = os.environ.get("SERVICE_DESK_ID")
 REQUEST_TYPE_ID = os.environ.get("REQUEST_TYPE_ID")
+# ✅ Single server agent credentials
+JIRA_AGENT_EMAIL = os.environ.get("JIRA_AGENT_EMAIL")
+JIRA_AGENT_TOKEN = os.environ.get("JIRA_AGENT_TOKEN")
 
 # ================================
-# 🎨 UI (UNCHANGED DESIGN)
+# 🎨 UI (REMOVE TOKEN INPUT)
 # ================================
 HTML_UI = """
 <!DOCTYPE html>
@@ -59,9 +62,6 @@ HTML_UI = """
             <label>Work Email</label>
             <input type="email" name="user_email" placeholder="yourname@company.com" required>
             
-            <label>Jira API Token</label>
-            <input type="password" name="user_token" placeholder="Paste your personal token" required>
-            
             <label>Upload CSV File</label>
             <input type="file" name="file" accept=".csv" required>
             
@@ -73,10 +73,10 @@ HTML_UI = """
 """
 
 # ================================
-# 🚀 BACKGROUND PROCESSOR (JSM FIX)
+# 🚀 BACKGROUND PROCESSOR (SINGLE AGENT)
 # ================================
-def process_in_background(df, user_email, user_token, reporter_name):
-    auth = HTTPBasicAuth(user_email, user_token)
+def process_in_background(df, user_email, reporter_name):
+    auth = HTTPBasicAuth(JIRA_AGENT_EMAIL, JIRA_AGENT_TOKEN)
 
     headers = {
         "Accept": "application/json",
@@ -92,7 +92,7 @@ def process_in_background(df, user_email, user_token, reporter_name):
         payload = {
             "serviceDeskId": SERVICE_DESK_ID,
             "requestTypeId": REQUEST_TYPE_ID,
-            "raiseOnBehalfOf": user_email,  # ⭐ fixes Anonymous banner
+            "raiseOnBehalfOf": user_email,  # ✅ Correct reporter
             "requestFieldValues": {
                 "summary": summary,
                 "description": f"Requested by: {reporter_name}"
@@ -116,7 +116,6 @@ def process_in_background(df, user_email, user_token, reporter_name):
         except Exception as e:
             print(f"CRITICAL ERROR: {str(e)}", flush=True)
 
-
 # ================================
 # 🌐 ROUTES
 # ================================
@@ -124,12 +123,10 @@ def process_in_background(df, user_email, user_token, reporter_name):
 def home():
     return render_template_string(HTML_UI)
 
-
 @app.route("/process-csv", methods=["POST"])
 def process_csv():
     rep_name = request.form.get("reporter_name")
     email = request.form.get("user_email")
-    token = request.form.get("user_token")
     file = request.files.get("file")
 
     try:
@@ -137,7 +134,7 @@ def process_csv():
 
         thread = threading.Thread(
             target=process_in_background,
-            args=(df, email, token, rep_name)
+            args=(df, email, rep_name)
         )
         thread.start()
 
@@ -151,7 +148,6 @@ def process_csv():
 
     except Exception as e:
         return f"Error: {str(e)}", 500
-
 
 # ================================
 # 🚀 RUN
