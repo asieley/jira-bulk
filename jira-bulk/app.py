@@ -29,9 +29,7 @@ HTML_UI = """
             padding: 40px; border-radius: 10px; box-shadow: 0 10px 25px rgba(0,0,0,0.1); 
             text-align: center;
         }
-        img.logo { 
-            max-width: 120px; margin-bottom: 20px; 
-        }
+        img.logo { max-width: 120px; margin-bottom: 20px; }
         h2 { color: #172b4d; margin-bottom: 25px; font-size: 20px; }
         label { display: block; text-align: left; margin-bottom: 5px; font-weight: bold; color: #444; }
         input { 
@@ -64,7 +62,7 @@ HTML_UI = """
 </html>
 """
 
-# === Success Page (with Logo + Back Button) ===
+# === Success Page (with Back Button + Logo) ===
 SUCCESS_PAGE = """
 <!DOCTYPE html>
 <html>
@@ -81,14 +79,12 @@ SUCCESS_PAGE = """
             padding: 40px; border-radius: 10px; box-shadow: 0 10px 25px rgba(0,0,0,0.1); 
             text-align: center;
         }
-        img.logo { 
-            max-width: 120px; margin-bottom: 20px; 
-        }
-        h3 { color: #172b4d; margin-bottom: 25px; }
+        img.logo { max-width: 120px; margin-bottom: 20px; }
+        h3 { color: #172b4d; }
         button { 
-            padding: 10px 20px; background-color: #FF8C00; 
+            margin-top: 20px; padding: 10px 20px; background-color: #FF8C00; 
             color: white; border: none; border-radius: 5px; cursor: pointer;
-            font-weight: bold;
+            font-weight: bold; font-size: 14px;
         }
         button:hover { background-color: #e67e00; }
     </style>
@@ -97,9 +93,7 @@ SUCCESS_PAGE = """
     <div class="container">
         <img src="/Logo.png" class="logo" alt="Company Logo">
         <h3>Upload Received! Tickets are being created.</h3>
-        <form action="/" method="get">
-            <button type="submit">Back to Upload</button>
-        </form>
+        <button onclick="window.location.href='/'">Back to Upload</button>
     </div>
 </body>
 </html>
@@ -111,12 +105,11 @@ def process_in_background(df, reporter_name, reporter_email):
     
     for index, row in df.iterrows():
         summary = str(row.get("Summary", "Site Access Request")).strip()
+        user_type = str(row.get("User Type", "")).strip()
+        access_start = str(row.get("Date", "")).strip()  # CSV column Date → Access Start
+        
         if not summary or summary.lower() == "nan": 
             continue
-
-        # Read custom fields from CSV
-        user_type = row.get("User Type", "")
-        access_start = row.get("Access Start", "")
 
         payload = {
             "fields": {
@@ -127,18 +120,18 @@ def process_in_background(df, reporter_name, reporter_email):
                     "version": 1,
                     "type": "doc",
                     "content": [
-                        {"type": "paragraph", "content": [
-                            {"type": "text", "text": f"Reporter: {reporter_name} | Email: {reporter_email}"}
-                        ]}
+                        {"type": "paragraph", 
+                         "content": [{"type": "text", "text": f"Reporter: {reporter_name} | Email: {reporter_email}"}]}
                     ]
                 },
-                "customfield_10167": user_type,      # User Type
-                "customfield_10164": access_start    # Access Start
+                "customfield_10167": user_type,   # User Type
+                "customfield_10164": access_start  # Access Start
             }
         }
 
-        # Public project → no auth required
+        # For public project, no auth needed
         res = requests.post(f"{JIRA_BASE}/rest/api/3/issue", json=payload, headers=headers)
+
         if res.status_code == 201:
             print(f"LOG: Created {res.json().get('key')} for {reporter_name}", flush=True)
         else:
@@ -154,9 +147,7 @@ def process_csv():
     reporter_name = request.form.get("reporter_name")
     reporter_email = request.form.get("email")
     file = request.files.get("file")
-
     df = pd.read_csv(io.StringIO(file.stream.read().decode("UTF-8")))
-
     threading.Thread(target=process_in_background, args=(df, reporter_name, reporter_email)).start()
     return render_template_string(SUCCESS_PAGE)
 
