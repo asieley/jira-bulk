@@ -62,7 +62,7 @@ HTML_UI = """
 </html>
 """
 
-# === Success Page (with Back Button + Logo) ===
+# === Success Page ===
 SUCCESS_PAGE = """
 <!DOCTYPE html>
 <html>
@@ -91,7 +91,7 @@ SUCCESS_PAGE = """
 </head>
 <body>
     <div class="container">
-        <img src="/Logo.png" class="logo" alt="Company Logo">
+        <img src="/Logo.png" class="logo">
         <h3>Upload Received! Tickets are being created.</h3>
         <button onclick="window.location.href='/'">Back to Upload</button>
     </div>
@@ -101,14 +101,26 @@ SUCCESS_PAGE = """
 
 # === Ticket Processing Function ===
 def process_in_background(df, reporter_name, reporter_email):
-    headers = {"Accept": "application/json", "Content-Type": "application/json"}
-    
+
+    headers = {
+        "Accept": "application/json",
+        "Content-Type": "application/json"
+    }
+
     for index, row in df.iterrows():
-        summary = str(row.get("Summary", "Site Access Request")).strip()
+
+        summary = str(row.get("Summary", "")).strip()
         user_type = str(row.get("User Type", "")).strip()
-        access_start = str(row.get("Date", "")).strip()  # CSV column Date → Access Start
-        
-        if not summary or summary.lower() == "nan": 
+        access_start_raw = str(row.get("Date", "")).strip()
+
+        if not summary or summary.lower() == "nan":
+            continue
+
+        # FIX DATE FORMAT
+        try:
+            access_start = pd.to_datetime(access_start_raw).strftime("%Y-%m-%d")
+        except:
+            print(f"ERROR: Invalid date format in row {index}", flush=True)
             continue
 
         payload = {
@@ -116,26 +128,43 @@ def process_in_background(df, reporter_name, reporter_email):
                 "project": {"key": PROJECT_KEY},
                 "issuetype": {"name": ISSUE_TYPE},
                 "summary": summary,
+
                 "description": {
                     "version": 1,
                     "type": "doc",
                     "content": [
-                        {"type": "paragraph", 
-                         "content": [{"type": "text", "text": f"Reporter: {reporter_name} | Email: {reporter_email}"}]}
+                        {
+                            "type": "paragraph",
+                            "content": [
+                                {"type": "text", "text": f"Reporter: {reporter_name} | Email: {reporter_email}"}
+                            ]
+                        }
                     ]
                 },
-                "customfield_10167": user_type,   # User Type
-                "customfield_10164": access_start  # Access Start
+
+                # FIX DROPDOWN FORMAT
+                "customfield_10167": {
+                    "value": user_type
+                },
+
+                # FIX DATE FIELD
+                "customfield_10164": access_start
             }
         }
 
-        # For public project, no auth needed
-        res = requests.post(f"{JIRA_BASE}/rest/api/3/issue", json=payload, headers=headers)
+        res = requests.post(
+            f"{JIRA_BASE}/rest/api/3/issue",
+            json=payload,
+            headers=headers
+        )
 
         if res.status_code == 201:
             print(f"LOG: Created {res.json().get('key')} for {reporter_name}", flush=True)
         else:
-            print(f"ERROR: Failed to create ticket for {reporter_name} | Status: {res.status_code} | Response: {res.text}", flush=True)
+            print(
+                f"ERROR: Failed | Status {res.status_code} | Response: {res.text}",
+                flush=True
+            )
 
 # === Flask Routes ===
 @app.route("/", methods=["GET"])
@@ -144,14 +173,24 @@ def home():
 
 @app.route("/process-csv", methods=["POST"])
 def process_csv():
+
     reporter_name = request.form.get("reporter_name")
     reporter_email = request.form.get("email")
     file = request.files.get("file")
+
+    if not file:
+        return "No file uploaded"
+
     df = pd.read_csv(io.StringIO(file.stream.read().decode("UTF-8")))
-    threading.Thread(target=process_in_background, args=(df, reporter_name, reporter_email)).start()
+
+    threading.Thread(
+        target=process_in_background,
+        args=(df, reporter_name, reporter_email)
+    ).start()
+
     return render_template_string(SUCCESS_PAGE)
 
-# Serve Logo.png directly from repo root
+# Serve Logo
 @app.route("/Logo.png")
 def serve_logo():
     return send_from_directory(os.getcwd(), "Logo.png")
