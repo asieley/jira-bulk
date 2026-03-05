@@ -5,20 +5,15 @@ from requests.auth import HTTPBasicAuth
 import io
 import os
 import threading
-import re
-import sys
-
-# Force UTF-8 for stdout to avoid encoding issues
-sys.stdout.reconfigure(encoding='utf-8')
 
 app = Flask(__name__)
 
-# === CONFIGURATION (Global Settings) ===
+# === CONFIGURATION ===
 JIRA_BASE = os.environ.get("JIRA_BASE")
 PROJECT_KEY = os.environ.get("PROJECT_KEY", "SAM")
 ISSUE_TYPE = os.environ.get("ISSUE_TYPE", "Task")
 
-# === UI DESIGN  ===
+# === UI DESIGN (Centered + Orange Button) ===
 HTML_UI = """
 <!DOCTYPE html>
 <html>
@@ -26,7 +21,7 @@ HTML_UI = """
     <title>Site Access Request</title>
     <style>
         body { 
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; 
+            font-family: 'Segoe UI', sans-serif; 
             margin: 0; display: flex; justify-content: center; align-items: center; 
             height: 100vh; background-color: #f4f5f7; 
         }
@@ -35,19 +30,18 @@ HTML_UI = """
             padding: 40px; border-radius: 10px; box-shadow: 0 10px 25px rgba(0,0,0,0.1); 
             text-align: center;
         }
-        h2 { color: #172b4d; margin-bottom: 25px; font-size: 20px; line-height: 1.4; }
+        h2 { color: #172b4d; margin-bottom: 25px; font-size: 20px; }
         label { display: block; text-align: left; margin-bottom: 5px; font-weight: bold; color: #444; }
         input { 
             width: 100%; padding: 12px; margin-bottom: 20px; 
-            border: 1px solid #dfe1e6; border-radius: 5px; box-sizing: border-box; font-size: 14px;
+            border: 1px solid #dfe1e6; border-radius: 5px; box-sizing: border-box; 
         }
         button { 
-            width: 100%; padding: 12px; background-color: #FF8C00;
+            width: 100%; padding: 12px; background-color: #FF8C00; 
             color: white; border: none; border-radius: 5px; font-weight: bold; 
-            cursor: pointer; font-size: 16px; transition: background 0.3s;
+            cursor: pointer; font-size: 16px;
         }
         button:hover { background-color: #e67e00; }
-        .footer-text { font-size: 12px; color: #6b778c; margin-top: 20px; }
     </style>
 </head>
 <body>
@@ -55,17 +49,13 @@ HTML_UI = """
         <h2>Site Access Request Bulk Upload of Tickets</h2>
         <form action="/process-csv" method="post" enctype="multipart/form-data">
             <label>Reporter Name</label>
-            <input type="text" name="reporter_name" placeholder="Enter your full name" required>
-
+            <input type="text" name="reporter_name" placeholder="Who is requesting this?" required>
             <label>Work Email</label>
-            <input type="email" name="user_email" placeholder="yourname@company.com" required>
-            
+            <input type="email" name="email" placeholder="email@company.com" required>
             <label>Jira API Token</label>
-            <input type="password" name="user_token" placeholder="Paste your personal token" required>
-            
-            <label>Upload CSV File</label>
+            <input type="password" name="token" placeholder="Paste API token" required>
+            <label>Upload CSV</label>
             <input type="file" name="file" accept=".csv" required>
-            
             <button type="submit">Create Tickets</button>
         </form>
     </div>
@@ -73,121 +63,47 @@ HTML_UI = """
 </html>
 """
 
-# ================================
-# Helper to remove emojis / non-BMP characters
-# ================================
-def remove_emojis(text):
-    if not text:
-        return ""
-    return re.sub(r'[\U00010000-\U0010FFFF]', '', text)
-
-# ================================
-# Get Jira accountId
-# ================================
-def get_account_id(email, auth, headers):
-    try:
-        url = f"{JIRA_BASE}/rest/api/3/user/search"
-        params = {"query": email}
-        res = requests.get(url, params=params, auth=auth, headers=headers)
-        if res.status_code == 200 and res.json():
-            return res.json()[0].get("accountId")
-        else:
-            print(f"WARNING: Could not find accountId for {email}", flush=True)
-            return None
-    except Exception as e:
-        print(f"ERROR fetching accountId: {e}", flush=True)
-        return None
-
-# ================================
-# Background processor
-# ================================
-def process_in_background(df, user_email, user_token, reporter_name):
-    auth = HTTPBasicAuth(user_email, user_token)
+def process_in_background(df, email, token, rep_name):
+    auth = HTTPBasicAuth(email, token)
     headers = {"Accept": "application/json", "Content-Type": "application/json"}
-
-    reporter_account_id = get_account_id(user_email, auth, headers)
-
-    reporter_name = remove_emojis(reporter_name)
-
+    
     for index, row in df.iterrows():
-        summary = remove_emojis(str(row.get("Summary", "Site Access Request")).strip())
-        if not summary or summary.lower() == "nan":
-            continue
+        summary = str(row.get("Summary", "Site Access Request")).strip()
+        if not summary or summary.lower() == "nan": continue
 
-        fields_payload = {
-            "project": {"key": PROJECT_KEY},
-            "issuetype": {"name": ISSUE_TYPE},
-            "summary": summary,
-            "description": {
-                "version": 1,
-                "type": "doc",
-                "content": [{
-                    "type": "paragraph",
+        payload = {
+            "fields": {
+                "project": {"key": PROJECT_KEY},
+                "issuetype": {"name": ISSUE_TYPE},
+                "summary": summary,
+                "description": {
+                    "version": 1,
+                    "type": "doc",
                     "content": [{
-                        "type": "text",
-                        "text": f"Requested by: {reporter_name}"
+                        "type": "paragraph", 
+                        "content": [{"type": "text", "text": f"Reporter: {rep_name}"}]
                     }]
-                }]
+                }
             }
         }
+        # Force print to Render logs
+        res = requests.post(f"{JIRA_BASE}/rest/api/3/issue", json=payload, auth=auth, headers=headers)
+        print(f"LOG: Created {res.json().get('key')} for {rep_name}", flush=True)
 
-        if reporter_account_id:
-            fields_payload["reporter"] = {"id": reporter_account_id}
-
-        payload = {"fields": fields_payload}
-
-        try:
-            res = requests.post(
-                f"{JIRA_BASE}/rest/api/3/issue",
-                json=payload,
-                auth=auth,
-                headers=headers
-            )
-
-            if res.status_code == 201:
-                print(f"LOG: Created {res.json().get('key')} for {reporter_name}", flush=True)
-            else:
-                print(f"ERROR: Row {index+1} - {res.text}", flush=True)
-
-        except Exception as e:
-            print(f"CRITICAL ERROR: {str(e)}", flush=True)
-
-# ================================
-# Routes
-# ================================
 @app.route("/", methods=["GET"])
-def home():
-    return render_template_string(HTML_UI)
+def home(): return render_template_string(HTML_UI)
 
 @app.route("/process-csv", methods=["POST"])
 def process_csv():
     rep_name = request.form.get("reporter_name")
-    email = request.form.get("user_email")
-    token = request.form.get("user_token")
+    email = request.form.get("email")
+    token = request.form.get("token")
     file = request.files.get("file")
+    df = pd.read_csv(io.StringIO(file.stream.read().decode("UTF-8")))
+    
+    # Run in background so Render doesn't timeout
+    threading.Thread(target=process_in_background, args=(df, email, token, rep_name)).start()
+    return "<h3>Upload Received! Tickets are being created.</h3>"
 
-    try:
-        df = pd.read_csv(io.StringIO(file.stream.read().decode("UTF-8")))
-
-        thread = threading.Thread(
-            target=process_in_background,
-            args=(df, email, token, rep_name)
-        )
-        thread.start()
-
-        return f"""
-        <div style='text-align:center; padding-top: 50px; font-family: Segoe UI;'>
-            <h2>Processing Started!</h2>
-            <p>Creating {len(df)} tickets for {rep_name}.</p>
-            <a href='/'>Back</a>
-        </div>
-        """
-
-    except Exception as e:
-        return f"Error: {str(e)}", 500
-
-# ================================
-# Run App
-# ================================
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))
