@@ -13,7 +13,7 @@ JIRA_BASE = os.environ.get("JIRA_BASE")
 PROJECT_KEY = os.environ.get("PROJECT_KEY", "SAM")
 ISSUE_TYPE = os.environ.get("ISSUE_TYPE", "Task")
 
-# === UI DESIGN ===
+# === HTML UI ===
 HTML_UI = """
 <!DOCTYPE html>
 <html>
@@ -53,31 +53,35 @@ button:hover { background:#e67e00; }
 """
 
 # ================================
-# Verify API token by fetching own accountId
+# Verify API token by fetching /myself
 # ================================
 def verify_api_token(email, token):
     auth = HTTPBasicAuth(email, token)
     headers = {"Accept": "application/json"}
 
     try:
-        url = f"{JIRA_BASE}/rest/api/3/myself"
-        res = requests.get(url, auth=auth, headers=headers)
+        res = requests.get(f"{JIRA_BASE}/rest/api/3/myself", auth=auth, headers=headers)
         if res.status_code == 200:
-            return res.json().get("accountId")  # valid token
-        else:
-            return None
+            return res.json().get("accountId")
+        return None
     except Exception as e:
         print(f"ERROR verifying token: {e}", flush=True)
         return None
 
 # ================================
-# Background processor
+# Background ticket creation
 # ================================
-def process_in_background(df, email, token, reporter_name, reporter_account_id):
+def process_csv_in_background(file_bytes, email, token, reporter_name, reporter_account_id):
+    try:
+        df = pd.read_csv(io.StringIO(file_bytes.decode("UTF-8")))
+    except Exception as e:
+        print(f"ERROR reading CSV: {e}", flush=True)
+        return
+
     auth = HTTPBasicAuth(email, token)
     headers = {"Accept": "application/json", "Content-Type": "application/json"}
 
-    for index, row in df.iterrows():
+    for idx, row in df.iterrows():
         summary = str(row.get("Summary", "Site Access Request")).strip()
         if not summary or summary.lower() == "nan":
             continue
@@ -98,7 +102,7 @@ def process_in_background(df, email, token, reporter_name, reporter_account_id):
                         }]
                     }]
                 },
-                "reporter": {"id": reporter_account_id}  # mandatory, reflects uploader
+                "reporter": {"id": reporter_account_id}  # use validated accountId
             }
         }
 
@@ -107,7 +111,7 @@ def process_in_background(df, email, token, reporter_name, reporter_account_id):
             if res.status_code == 201:
                 print(f"LOG: Created {res.json().get('key')} for {reporter_name}", flush=True)
             else:
-                print(f"ERROR: Row {index+1} - {res.text}", flush=True)
+                print(f"ERROR: Row {idx+1} - {res.text}", flush=True)
         except Exception as e:
             print(f"CRITICAL ERROR: {str(e)}", flush=True)
 
@@ -120,37 +124,39 @@ def home():
 
 @app.route("/process-csv", methods=["POST"])
 def process_csv():
-    rep_name = request.form.get("reporter_name")
+    reporter_name = request.form.get("reporter_name")
     email = request.form.get("user_email")
     token = request.form.get("user_token")
     file = request.files.get("file")
 
-    # ✅ Verify API token first
+    # ✅ Verify token first
     reporter_account_id = verify_api_token(email, token)
     if not reporter_account_id:
-        return f"<div style='text-align:center; padding-top:50px;'><h2>Invalid Jira API token or email!</h2><a href='/'>Back</a></div>"
-
-    try:
-        df = pd.read_csv(io.StringIO(file.stream.read().decode("UTF-8")))
-
-        thread = threading.Thread(
-            target=process_in_background,
-            args=(df, email, token, rep_name, reporter_account_id)
-        )
-        thread.start()
-
-        return f"""
-        <div style='text-align:center; padding-top: 50px; font-family: Segoe UI;'>
-            <h2>Processing Started!</h2>
-            <p>Creating {len(df)} tickets for {rep_name}.</p>
+        return """
+        <div style='text-align:center; padding-top:50px; font-family:Segoe UI;'>
+            <h2>Invalid Jira API token or email!</h2>
             <a href='/'>Back</a>
         </div>
         """
-    except Exception as e:
-        return f"Error: {str(e)}", 500
+
+    # Read file bytes only; process CSV in background thread
+    file_bytes = file.stream.read()
+    thread = threading.Thread(
+        target=process_csv_in_background,
+        args=(file_bytes, email, token, reporter_name, reporter_account_id)
+    )
+    thread.start()
+
+    return f"""
+    <div style='text-align:center; padding-top:50px; font-family:Segoe UI;'>
+        <h2>Processing Started!</h2>
+        <p>Creating tickets for {reporter_name}...</p>
+        <a href='/'>Back</a>
+    </div>
+    """
 
 # ================================
-# Run App
+# Run app with threaded=True to allow background threads
 # ================================
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)), threaded=True)
