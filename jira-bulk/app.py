@@ -1,4 +1,4 @@
-from flask import Flask, request, render_template_string
+from flask import Flask, request, render_template_string, send_from_directory
 import requests
 import pandas as pd
 from requests.auth import HTTPBasicAuth
@@ -13,7 +13,7 @@ JIRA_BASE = os.environ.get("JIRA_BASE")
 PROJECT_KEY = os.environ.get("PROJECT_KEY", "SAM")
 ISSUE_TYPE = os.environ.get("ISSUE_TYPE", "Task")
 
-# === UI DESIGN (Centered + Orange Button) ===
+# === UI DESIGN (Centered + Orange Button + Logo) ===
 HTML_UI = """
 <!DOCTYPE html>
 <html>
@@ -29,6 +29,10 @@ HTML_UI = """
             width: 100%; max-width: 450px; background: white; 
             padding: 40px; border-radius: 10px; box-shadow: 0 10px 25px rgba(0,0,0,0.1); 
             text-align: center;
+        }
+        img.logo {
+            max-width: 150px;
+            margin-bottom: 20px;
         }
         h2 { color: #172b4d; margin-bottom: 25px; font-size: 20px; }
         label { display: block; text-align: left; margin-bottom: 5px; font-weight: bold; color: #444; }
@@ -46,6 +50,7 @@ HTML_UI = """
 </head>
 <body>
     <div class="container">
+        <img src="/logo" class="logo" alt="Company Logo">
         <h2>Site Access Request Bulk Upload of Tickets</h2>
         <form action="/process-csv" method="post" enctype="multipart/form-data">
             <label>Reporter Name</label>
@@ -58,6 +63,38 @@ HTML_UI = """
             <input type="file" name="file" accept=".csv" required>
             <button type="submit">Create Tickets</button>
         </form>
+    </div>
+</body>
+</html>
+"""
+
+HTML_CONFIRMATION = """
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Tickets Processing</title>
+    <style>
+        body { 
+            font-family: 'Segoe UI', sans-serif; 
+            margin: 0; display: flex; justify-content: center; align-items: center; 
+            height: 100vh; background-color: #f4f5f7; 
+        }
+        .container { 
+            width: 100%; max-width: 450px; background: white; 
+            padding: 40px; border-radius: 10px; box-shadow: 0 10px 25px rgba(0,0,0,0.1); 
+            text-align: center;
+        }
+        img.logo {
+            max-width: 150px;
+            margin-bottom: 20px;
+        }
+        h3 { color: #172b4d; font-size: 18px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <img src="/logo" class="logo" alt="Company Logo">
+        <h3>Upload Received! Tickets are being created.</h3>
     </div>
 </body>
 </html>
@@ -79,19 +116,19 @@ def process_in_background(df, email, token, rep_name):
                 "description": {
                     "version": 1,
                     "type": "doc",
-                    "content": [{
+                    "content": [ {
                         "type": "paragraph", 
                         "content": [{"type": "text", "text": f"Reporter: {rep_name}"}]
-                    }]
+                    } ]
                 }
             }
         }
-        # Force print to Render logs
         res = requests.post(f"{JIRA_BASE}/rest/api/3/issue", json=payload, auth=auth, headers=headers)
         print(f"LOG: Created {res.json().get('key')} for {rep_name}", flush=True)
 
 @app.route("/", methods=["GET"])
-def home(): return render_template_string(HTML_UI)
+def home(): 
+    return render_template_string(HTML_UI)
 
 @app.route("/process-csv", methods=["POST"])
 def process_csv():
@@ -101,9 +138,13 @@ def process_csv():
     file = request.files.get("file")
     df = pd.read_csv(io.StringIO(file.stream.read().decode("UTF-8")))
     
-    # Run in background so Render doesn't timeout
     threading.Thread(target=process_in_background, args=(df, email, token, rep_name)).start()
-    return "<h3>Upload Received! Tickets are being created.</h3>"
+    return render_template_string(HTML_CONFIRMATION)
+
+# Serve the logo file
+@app.route("/logo")
+def logo():
+    return send_from_directory(os.path.dirname(os.path.abspath(__file__)), "Logo.png")
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))
