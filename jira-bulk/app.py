@@ -13,7 +13,7 @@ JIRA_BASE = os.environ.get("JIRA_BASE")
 PROJECT_KEY = os.environ.get("PROJECT_KEY", "SAM")
 ISSUE_TYPE = os.environ.get("ISSUE_TYPE", "Task")
 
-# === UI DESIGN (Centered with Orange Button) ===
+# === UI DESIGN (Centered + Orange Button) ===
 HTML_UI = """
 <!DOCTYPE html>
 <html>
@@ -38,7 +38,7 @@ HTML_UI = """
             box-shadow: 0 10px 25px rgba(0,0,0,0.1); 
             text-align: center;
         }
-        h2 { color: #172b4d; margin-bottom: 25px; font-size: 22px; }
+        h2 { color: #172b4d; margin-bottom: 25px; font-size: 20px; line-height: 1.4; }
         label { display: block; text-align: left; margin-bottom: 5px; font-weight: bold; color: #444; }
         input { 
             width: 100%; 
@@ -52,7 +52,7 @@ HTML_UI = """
         button { 
             width: 100%; 
             padding: 12px; 
-            background-color: #FF8C00; /* Dark Orange */
+            background-color: #FF8C00; /* Orange Button */
             color: white; 
             border: none; 
             border-radius: 5px; 
@@ -70,10 +70,10 @@ HTML_UI = """
         <h2>Site Access Request Bulk Upload of Tickets</h2>
         <form action="/process-csv" method="post" enctype="multipart/form-data">
             <label>Work Email</label>
-            <input type="email" name="user_email" placeholder="email@company.com" required>
+            <input type="email" name="user_email" placeholder="yourname@company.com" required>
             
             <label>Jira API Token</label>
-            <input type="password" name="user_token" placeholder="Paste your API token" required>
+            <input type="password" name="user_token" placeholder="Paste your personal token" required>
             
             <label>Upload CSV File</label>
             <input type="file" name="file" accept=".csv" required>
@@ -81,7 +81,7 @@ HTML_UI = """
             <button type="submit">Create Tickets</button>
         </form>
         <div class="footer-text">
-            <b>Note:</b> Tickets will be created under the name associated with the API token provided.
+            <b>Important:</b> Tickets will be created under the account associated with the provided email and token.
         </div>
     </div>
 </body>
@@ -89,11 +89,11 @@ HTML_UI = """
 """
 
 def process_in_background(df, user_email, user_token):
-    # This auth object ensures the 'Reporter' is the user, not anonymous
+    # This auth ensures Jira knows EXACTLY who is creating the ticket
     auth = HTTPBasicAuth(user_email, user_token)
     headers = {"Accept": "application/json", "Content-Type": "application/json"}
     
-    print(f"DEBUG: Starting background process for {user_email}", flush=True)
+    print(f"--- STARTING BATCH FOR {user_email} ---", flush=True)
     
     for index, row in df.iterrows():
         summary = str(row.get("Summary", "Site Access Request")).strip()
@@ -111,11 +111,11 @@ def process_in_background(df, user_email, user_token):
         try:
             res = requests.post(f"{JIRA_BASE}/rest/api/3/issue", json=payload, auth=auth, headers=headers)
             if res.status_code == 201:
-                print(f"LOG: Created {res.json().get('key')} for {user_email}", flush=True)
+                print(f"SUCCESS: Created {res.json().get('key')} (Reporter: {user_email})", flush=True)
             else:
-                print(f"ERROR: Row {index+1} failed - {res.text}", flush=True)
+                print(f"FAILED: Row {index+1} - {res.text}", flush=True)
         except Exception as e:
-            print(f"CRITICAL: Connection error on row {index+1} - {str(e)}", flush=True)
+            print(f"CRITICAL ERROR: {str(e)}", flush=True)
 
 @app.route("/", methods=["GET"])
 def home():
@@ -131,15 +131,15 @@ def process_csv():
         return "Missing email, token, or file", 400
 
     try:
-        # Read file into memory
+        # Load CSV into memory for processing
         df = pd.read_csv(io.StringIO(file.stream.read().decode("UTF-8")))
-        print(f"LOG: Received {len(df)} rows from {email}", flush=True)
+        print(f"LOG: Processing {len(df)} rows from {email}", flush=True)
         
-        # Start background thread to avoid Render 30s timeout
+        # Start background thread to keep Render responsive
         thread = threading.Thread(target=process_in_background, args=(df, email, token))
         thread.start()
 
-        return f"<div style='text-align:center; padding-top: 50px; font-family: sans-serif;'><h2>Upload Received</h2><p>Processing {len(df)} tickets. You can close this window.</p><a href='/'>Upload Another</a></div>"
+        return f"<div style='text-align:center; padding-top: 50px; font-family: sans-serif;'><h2>Processing Started!</h2><p>Creating {len(df)} tickets under {email}. Check your Render logs for live updates.</p><a href='/'>Upload Another</a></div>"
     except Exception as e:
         print(f"SERVER ERROR: {str(e)}", flush=True)
         return f"Error: {str(e)}", 500
