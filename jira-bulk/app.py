@@ -1,7 +1,6 @@
 from flask import Flask, request, render_template_string, send_from_directory
 import requests
 import pandas as pd
-from requests.auth import HTTPBasicAuth
 import io
 import os
 import threading
@@ -56,8 +55,6 @@ HTML_UI = """
             <input type="text" name="reporter_name" placeholder="Who is requesting this?" required>
             <label>Work Email</label>
             <input type="email" name="email" placeholder="email@company.com" required>
-            <label>Jira API Token</label>
-            <input type="password" name="token" placeholder="Paste API token" required>
             <label>Upload CSV</label>
             <input type="file" name="file" accept=".csv" required>
             <button type="submit">Create Tickets</button>
@@ -99,8 +96,8 @@ SUCCESS_PAGE = """
 </html>
 """
 
-def process_in_background(df, email, token, rep_name):
-    auth = HTTPBasicAuth(email, token)
+# === Ticket Processing Function ===
+def process_in_background(df, reporter_name, reporter_email):
     headers = {"Accept": "application/json", "Content-Type": "application/json"}
     
     for index, row in df.iterrows():
@@ -118,30 +115,39 @@ def process_in_background(df, email, token, rep_name):
                     "type": "doc",
                     "content": [{
                         "type": "paragraph", 
-                        "content": [{"type": "text", "text": f"Reporter: {rep_name}"}]
+                        "content": [
+                            {"type": "text", "text": f"Reporter: {reporter_name} | Email: {reporter_email}"}
+                        ]
                     }]
                 }
             }
         }
-        res = requests.post(f"{JIRA_BASE}/rest/api/3/issue", json=payload, auth=auth, headers=headers)
-        print(f"LOG: Created {res.json().get('key')} for {rep_name}", flush=True)
 
+        # Since project is Public, no authentication is required
+        res = requests.post(f"{JIRA_BASE}/rest/api/3/issue", json=payload, headers=headers)
+
+        if res.status_code == 201:
+            print(f"LOG: Created {res.json().get('key')} for {reporter_name}", flush=True)
+        else:
+            print(f"ERROR: Failed to create ticket for {reporter_name} | Status: {res.status_code} | Response: {res.text}", flush=True)
+
+# === Flask Routes ===
 @app.route("/", methods=["GET"])
-def home(): 
+def home():
     return render_template_string(HTML_UI)
 
 @app.route("/process-csv", methods=["POST"])
 def process_csv():
-    rep_name = request.form.get("reporter_name")
-    email = request.form.get("email")
-    token = request.form.get("token")
+    reporter_name = request.form.get("reporter_name")
+    reporter_email = request.form.get("email")
     file = request.files.get("file")
+
     df = pd.read_csv(io.StringIO(file.stream.read().decode("UTF-8")))
-    
-    threading.Thread(target=process_in_background, args=(df, email, token, rep_name)).start()
+
+    threading.Thread(target=process_in_background, args=(df, reporter_name, reporter_email)).start()
     return render_template_string(SUCCESS_PAGE)
 
-# Serve Logo.png directly from the repo root
+# Serve Logo.png directly from repo root
 @app.route("/Logo.png")
 def serve_logo():
     return send_from_directory(os.getcwd(), "Logo.png")
