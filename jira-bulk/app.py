@@ -113,27 +113,26 @@ def process_in_background(df, jira_email, jira_token, reporter_name):
             continue
 
         payload = {
-            "fields": {
-                "project": {"key": PROJECT_KEY},
-                "issuetype": {"name": ISSUE_TYPE},
-                "summary": summary,
-                "reporter": {"emailAddress": jira_email},  # Ensure reporter is the user
-                "description": {
-                    "version": 1,
-                    "type": "doc",
+    "fields": {
+        "project": {"key": PROJECT_KEY},
+        "issuetype": {"name": ISSUE_TYPE},
+        "summary": summary,
+        "description": {
+            "version": 1,
+            "type": "doc",
+            "content": [
+                {
+                    "type": "paragraph",
                     "content": [
-                        {
-                            "type": "paragraph",
-                            "content": [
-                                {"type": "text", "text": f"Reporter: {reporter_name or jira_email} | Email: {jira_email}"}
-                            ]
-                        }
+                        {"type": "text", "text": f"Requester Name: {reporter_name or jira_email} | Email: {jira_email}"}
                     ]
-                },
-                "customfield_10167": {"value": user_type},   # User Type dropdown
-                "customfield_10164": access_start           # Access Start date
-            }
-        }
+                }
+            ]
+        },
+        "customfield_10167": {"value": user_type},   # User Type dropdown
+        "customfield_10164": access_start           # Access Start date
+    }
+}
 
         res = requests.post(
             f"{JIRA_BASE}/rest/api/3/issue",
@@ -180,3 +179,4 @@ def serve_logo():
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))
+
