@@ -64,7 +64,7 @@ HTML_UI = """
 </html>
 """
 
-# === Success Page (with Logo) ===
+# === Success Page (with Logo + Back Button) ===
 SUCCESS_PAGE = """
 <!DOCTYPE html>
 <html>
@@ -84,13 +84,22 @@ SUCCESS_PAGE = """
         img.logo { 
             max-width: 120px; margin-bottom: 20px; 
         }
-        h3 { color: #172b4d; }
+        h3 { color: #172b4d; margin-bottom: 25px; }
+        button { 
+            padding: 10px 20px; background-color: #FF8C00; 
+            color: white; border: none; border-radius: 5px; cursor: pointer;
+            font-weight: bold;
+        }
+        button:hover { background-color: #e67e00; }
     </style>
 </head>
 <body>
     <div class="container">
         <img src="/Logo.png" class="logo" alt="Company Logo">
         <h3>Upload Received! Tickets are being created.</h3>
+        <form action="/" method="get">
+            <button type="submit">Back to Upload</button>
+        </form>
     </div>
 </body>
 </html>
@@ -105,6 +114,10 @@ def process_in_background(df, reporter_name, reporter_email):
         if not summary or summary.lower() == "nan": 
             continue
 
+        # Read custom fields from CSV
+        user_type = row.get("User Type", "")
+        access_start = row.get("Access Start", "")
+
         payload = {
             "fields": {
                 "project": {"key": PROJECT_KEY},
@@ -113,19 +126,19 @@ def process_in_background(df, reporter_name, reporter_email):
                 "description": {
                     "version": 1,
                     "type": "doc",
-                    "content": [{
-                        "type": "paragraph", 
-                        "content": [
+                    "content": [
+                        {"type": "paragraph", "content": [
                             {"type": "text", "text": f"Reporter: {reporter_name} | Email: {reporter_email}"}
-                        ]
-                    }]
-                }
+                        ]}
+                    ]
+                },
+                "customfield_10167": user_type,      # User Type
+                "customfield_10164": access_start    # Access Start
             }
         }
 
-        # Since project is Public, no authentication is required
+        # Public project → no auth required
         res = requests.post(f"{JIRA_BASE}/rest/api/3/issue", json=payload, headers=headers)
-
         if res.status_code == 201:
             print(f"LOG: Created {res.json().get('key')} for {reporter_name}", flush=True)
         else:
