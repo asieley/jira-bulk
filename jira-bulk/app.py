@@ -1,4 +1,4 @@
-from flask import Flask, request, render_template_string
+from flask import Flask, request, render_template_string, send_from_directory
 import requests
 import pandas as pd
 from requests.auth import HTTPBasicAuth
@@ -92,7 +92,7 @@ SUCCESS_PAGE = """
 </head>
 <body>
     <div class="container">
-        <img src="/static/Logo.png" class="logo" alt="Company Logo">
+        <img src="/Logo.png" class="logo" alt="Company Logo">
         <h3>Upload Received! Tickets are being created.</h3>
     </div>
 </body>
@@ -105,7 +105,8 @@ def process_in_background(df, email, token, rep_name):
     
     for index, row in df.iterrows():
         summary = str(row.get("Summary", "Site Access Request")).strip()
-        if not summary or summary.lower() == "nan": continue
+        if not summary or summary.lower() == "nan": 
+            continue
 
         payload = {
             "fields": {
@@ -140,8 +141,10 @@ def process_csv():
     threading.Thread(target=process_in_background, args=(df, email, token, rep_name)).start()
     return render_template_string(SUCCESS_PAGE)
 
-if __name__ == "__main__":
-    # Make sure Flask can serve the static Logo.png
-    app.static_folder = "."
-    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))
+# Serve Logo.png directly from the repo root
+@app.route("/Logo.png")
+def serve_logo():
+    return send_from_directory(os.getcwd(), "Logo.png")
 
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))
