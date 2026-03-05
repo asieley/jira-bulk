@@ -1,4 +1,4 @@
-from flask import Flask, request, render_template_string, send_from_directory
+from flask import Flask, request, render_template_string
 import requests
 import pandas as pd
 from requests.auth import HTTPBasicAuth
@@ -30,9 +30,8 @@ HTML_UI = """
             padding: 40px; border-radius: 10px; box-shadow: 0 10px 25px rgba(0,0,0,0.1); 
             text-align: center;
         }
-        img.logo {
-            max-width: 150px;
-            margin-bottom: 20px;
+        img.logo { 
+            max-width: 120px; margin-bottom: 20px; 
         }
         h2 { color: #172b4d; margin-bottom: 25px; font-size: 20px; }
         label { display: block; text-align: left; margin-bottom: 5px; font-weight: bold; color: #444; }
@@ -50,7 +49,7 @@ HTML_UI = """
 </head>
 <body>
     <div class="container">
-        <img src="/logo" class="logo" alt="Company Logo">
+        <img src="/static/Logo.png" class="logo" alt="Company Logo">
         <h2>Site Access Request Bulk Upload of Tickets</h2>
         <form action="/process-csv" method="post" enctype="multipart/form-data">
             <label>Reporter Name</label>
@@ -68,7 +67,8 @@ HTML_UI = """
 </html>
 """
 
-HTML_CONFIRMATION = """
+# === Success Page (with Logo) ===
+SUCCESS_PAGE = """
 <!DOCTYPE html>
 <html>
 <head>
@@ -84,16 +84,15 @@ HTML_CONFIRMATION = """
             padding: 40px; border-radius: 10px; box-shadow: 0 10px 25px rgba(0,0,0,0.1); 
             text-align: center;
         }
-        img.logo {
-            max-width: 150px;
-            margin-bottom: 20px;
+        img.logo { 
+            max-width: 120px; margin-bottom: 20px; 
         }
-        h3 { color: #172b4d; font-size: 18px; }
+        h3 { color: #172b4d; }
     </style>
 </head>
 <body>
     <div class="container">
-        <img src="/logo" class="logo" alt="Company Logo">
+        <img src="/static/Logo.png" class="logo" alt="Company Logo">
         <h3>Upload Received! Tickets are being created.</h3>
     </div>
 </body>
@@ -116,10 +115,10 @@ def process_in_background(df, email, token, rep_name):
                 "description": {
                     "version": 1,
                     "type": "doc",
-                    "content": [ {
+                    "content": [{
                         "type": "paragraph", 
                         "content": [{"type": "text", "text": f"Reporter: {rep_name}"}]
-                    } ]
+                    }]
                 }
             }
         }
@@ -139,12 +138,9 @@ def process_csv():
     df = pd.read_csv(io.StringIO(file.stream.read().decode("UTF-8")))
     
     threading.Thread(target=process_in_background, args=(df, email, token, rep_name)).start()
-    return render_template_string(HTML_CONFIRMATION)
-
-# Serve the logo file
-@app.route("/logo")
-def logo():
-    return send_from_directory(os.path.dirname(os.path.abspath(__file__)), "Logo.png")
+    return render_template_string(SUCCESS_PAGE)
 
 if __name__ == "__main__":
+    # Make sure Flask can serve the static Logo.png
+    app.static_folder = "."
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))
