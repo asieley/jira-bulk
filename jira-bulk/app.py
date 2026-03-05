@@ -49,7 +49,7 @@ HTML_UI = """
 </head>
 <body>
     <div class="container">
-        <img src="/static/Logo.png" class="logo" alt="Company Logo">
+        <img src="/Logo.png" class="logo" alt="Company Logo">
         <h2>Site Access Request Bulk Upload of Tickets</h2>
         <form action="/process-csv" method="post" enctype="multipart/form-data">
             <label>Reporter Name</label>
@@ -144,3 +144,4 @@ if __name__ == "__main__":
     # Make sure Flask can serve the static Logo.png
     app.static_folder = "."
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))
+
