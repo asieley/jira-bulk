@@ -8,12 +8,16 @@ import threading
 
 app = Flask(__name__)
 
-# === CONFIGURATION (Global Settings) ===
+# ================================
+# 🔧 CONFIG
+# ================================
 JIRA_BASE = os.environ.get("JIRA_BASE")
-PROJECT_KEY = os.environ.get("PROJECT_KEY", "SAM")
-ISSUE_TYPE = os.environ.get("ISSUE_TYPE", "Task")
+SERVICE_DESK_ID = os.environ.get("SERVICE_DESK_ID")
+REQUEST_TYPE_ID = os.environ.get("REQUEST_TYPE_ID")
 
-# === UI DESIGN (Centered + Orange Button) ===
+# ================================
+# 🎨 UI (UNCHANGED DESIGN)
+# ================================
 HTML_UI = """
 <!DOCTYPE html>
 <html>
@@ -69,83 +73,52 @@ HTML_UI = """
 """
 
 # ================================
-# 🔥 NEW — Get Jira accountId
-# ================================
-def get_account_id(email, auth, headers):
-    try:
-        url = f"{JIRA_BASE}/rest/api/3/user/search"
-        params = {"query": email}
-
-        res = requests.get(url, params=params, auth=auth, headers=headers)
-
-        if res.status_code == 200 and res.json():
-            return res.json()[0].get("accountId")
-        else:
-            print(f"WARNING: Could not find accountId for {email}", flush=True)
-            return None
-
-    except Exception as e:
-        print(f"ERROR fetching accountId: {e}", flush=True)
-        return None
-
-
-# ================================
-# 🚀 Background processor
+# 🚀 BACKGROUND PROCESSOR (JSM FIX)
 # ================================
 def process_in_background(df, user_email, user_token, reporter_name):
     auth = HTTPBasicAuth(user_email, user_token)
-    headers = {"Accept": "application/json", "Content-Type": "application/json"}
 
-    # ✅ Get reporter accountId once
-    reporter_account_id = get_account_id(user_email, auth, headers)
+    headers = {
+        "Accept": "application/json",
+        "Content-Type": "application/json",
+        "X-ExperimentalApi": "opt-in"
+    }
 
     for index, row in df.iterrows():
         summary = str(row.get("Summary", "Site Access Request")).strip()
         if not summary or summary.lower() == "nan":
             continue
 
-        fields_payload = {
-            "project": {"key": PROJECT_KEY},
-            "issuetype": {"name": ISSUE_TYPE},
-            "summary": summary,
-            "description": {
-                "version": 1,
-                "type": "doc",
-                "content": [{
-                    "type": "paragraph",
-                    "content": [{
-                        "type": "text",
-                        "text": f"Requested by: {reporter_name}"
-                    }]
-                }]
+        payload = {
+            "serviceDeskId": SERVICE_DESK_ID,
+            "requestTypeId": REQUEST_TYPE_ID,
+            "raiseOnBehalfOf": user_email,  # ⭐ fixes Anonymous banner
+            "requestFieldValues": {
+                "summary": summary,
+                "description": f"Requested by: {reporter_name}"
             }
         }
 
-        # ✅ Set reporter properly (fixes Anonymous)
-        if reporter_account_id:
-            fields_payload["reporter"] = {"id": reporter_account_id}
-
-        payload = {"fields": fields_payload}
-
         try:
             res = requests.post(
-                f"{JIRA_BASE}/rest/api/3/issue",
+                f"{JIRA_BASE}/rest/servicedeskapi/request",
                 json=payload,
                 auth=auth,
                 headers=headers
             )
 
-            if res.status_code == 201:
-                print(f"LOG: Created {res.json().get('key')} for {reporter_name}", flush=True)
+            if res.status_code in (200, 201):
+                key = res.json().get("issueKey")
+                print(f"LOG: Created {key} for {reporter_name}", flush=True)
             else:
-                print(f"ERROR: Row {index+1} - {res.text}", flush=True)
+                print(f"ERROR Row {index+1}: {res.status_code} - {res.text}", flush=True)
 
         except Exception as e:
             print(f"CRITICAL ERROR: {str(e)}", flush=True)
 
 
 # ================================
-# 🌐 Routes
+# 🌐 ROUTES
 # ================================
 @app.route("/", methods=["GET"])
 def home():
@@ -181,7 +154,7 @@ def process_csv():
 
 
 # ================================
-# 🚀 Run App
+# 🚀 RUN
 # ================================
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))
